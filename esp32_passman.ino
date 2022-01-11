@@ -18,7 +18,9 @@
 #include <SPI.h>
 #include <Wire.h>
 #include <Adafruit_GFX.h>
-#include <Adafruit_SSD1306.h>
+#include <Adafruit_SSD1306.h> //OLED library
+
+#include <Adafruit_PN532.h> //RFID library
 
 //struct for credentials
 typedef struct
@@ -35,6 +37,15 @@ BleKeyboard bleKeyboard;  //bluetooth keyboard object
 #define BUTTON_ACK 15  // GIOP15 pin connected to button
 #define BUTTON_CHANGE 4  // GIOP4 pin connected to button
 #define BUTTON_SPECIAL 16 // GIOP16 pin connected to button
+
+/* pins for RFID module SPI*/
+#define PN532_SCK  (18)
+#define PN532_MOSI (23)
+#define PN532_SS   (5)
+#define PN532_MISO (19)
+
+SPIClass SPI_NFC(VSPI);
+Adafruit_PN532 nfc(PN532_SS);
 
 #define SCREEN_WIDTH 128 // OLED display width, in pixels
 #define SCREEN_HEIGHT 32 // OLED display height, in pixels
@@ -84,7 +95,6 @@ bool BlConnected = false; //is device connected
 //create button objects
 DetectBtn ackBtn(BUTTON_ACK);
 DetectBtn changeBtn(BUTTON_CHANGE);
-DetectBtn specialBtn(BUTTON_SPECIAL);
 
 void setup() {
   Serial.begin(115200);
@@ -94,6 +104,24 @@ void setup() {
     Serial.println(F("SSD1306 allocation failed"));
     for (;;); // Don't proceed, loop forever
   }
+
+    /*start with RFID module*/
+    SPI_NFC.begin(PN532_SCK, PN532_MISO, PN532_MOSI, PN532_SS); 
+    nfc.begin();
+
+  uint32_t versiondata = nfc.getFirmwareVersion();
+  if (! versiondata) {
+    Serial.print("Didn't find PN53x board");
+    for (;;); // Don't proceed, loop forever
+  }
+
+  // Set the max number of retry attempts to read from a card
+  // This prevents us from waiting forever for a card, which is
+  // the default behaviour of the PN532.
+  //nfc.setPassiveActivationRetries(0xFF);
+  
+  // configure board to read RFID tags
+  nfc.SAMConfig();
 
 
   bleKeyboard.begin(); //start blueetooth keyboard connection
@@ -113,13 +141,30 @@ void loop() {
   // the interval at which you want to blink the LED.
   unsigned long currentMillis = millis();
 
-  specialBtn.read(); //read special button
   ackBtn.read();     //read ack button
   changeBtn.read();  //read change button
 
+  boolean success;
+  uint8_t uid[] = { 0, 0, 0, 0, 0, 0, 0 };  // Buffer to store the returned UID
+  uint8_t uidLength;        // Length of the UID (4 or 7 bytes depending on ISO14443A card type)
+  
+  // Wait for an ISO14443A type cards (Mifare, etc.).  When one is found
+  // 'uid' will be populated with the UID, and uidLength will indicate
+  // if the uid is 4 bytes (Mifare Classic) or 7 bytes (Mifare Ultralight)
+  success = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, &uid[0], &uidLength);
 
-  if (specialBtn.isRisingEdge())
+
+
+
+  if (success)
   {
+    Serial.println("Found a card!");
+    Serial.print("UID Length: ");Serial.print(uidLength, DEC);Serial.println(" bytes");
+    Serial.print("UID Value: ");
+    for (uint8_t i=0; i < uidLength; i++) 
+    {
+      Serial.print(" 0x");Serial.print(uid[i], HEX); 
+    }
 
 
     chacha.setKey(key, chacha.keySize());
@@ -163,8 +208,6 @@ void loop() {
 
 
   }
-
-  //Serial.println(specialBtn.isRisingEdge());
 
   if (bleKeyboard.isConnected()) {
 
