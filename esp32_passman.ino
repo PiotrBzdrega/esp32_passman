@@ -99,40 +99,11 @@ DetectBtn changeBtn(BUTTON_CHANGE);
 void setup() {
   Serial.begin(115200);
 
-  // SSD1306_SWITCHCAPVCC = generate display voltage from 3.3V internally
-  if (!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
-    Serial.println(F("SSD1306 allocation failed"));
-    for (;;); // Don't proceed, loop forever
-  }
+  displayInit(); // type welcome string after initialization
 
-    /*start with RFID module*/
-    SPI_NFC.begin(PN532_SCK, PN532_MISO, PN532_MOSI, PN532_SS); 
-    nfc.begin();
-
-  uint32_t versiondata = nfc.getFirmwareVersion();
-  if (! versiondata) {
-    Serial.print("Didn't find PN53x board");
-    for (;;); // Don't proceed, loop forever
-  }
-
-  // Set the max number of retry attempts to read from a card
-  // This prevents us from waiting forever for a card, which is
-  // the default behaviour of the PN532.
-  //nfc.setPassiveActivationRetries(0xFF);
-  
-  // configure board to read RFID tags
-  nfc.SAMConfig();
-
+  rfidInit(); //initialize PN532; user needs to enter secret code before use main functionality
 
   bleKeyboard.begin(); //start blueetooth keyboard connection
-
-
-  display.drawPixel(10, 10, SSD1306_WHITE); // Draw a single pixel in white
-
-
-  // Show the display buffer on the screen. You MUST call display() after
-  display.display(); // drawing commands to make them visible on screen!
-
 }
 
 void loop() {
@@ -144,27 +115,13 @@ void loop() {
   ackBtn.read();     //read ack button
   changeBtn.read();  //read change button
 
-  boolean success;
-  uint8_t uid[] = { 0, 0, 0, 0, 0, 0, 0 };  // Buffer to store the returned UID
-  uint8_t uidLength;        // Length of the UID (4 or 7 bytes depending on ISO14443A card type)
-  
-  // Wait for an ISO14443A type cards (Mifare, etc.).  When one is found
-  // 'uid' will be populated with the UID, and uidLength will indicate
-  // if the uid is 4 bytes (Mifare Classic) or 7 bytes (Mifare Ultralight)
-  success = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, &uid[0], &uidLength);
 
 
 
 
-  if (success)
+  if (false)
   {
-    Serial.println("Found a card!");
-    Serial.print("UID Length: ");Serial.print(uidLength, DEC);Serial.println(" bytes");
-    Serial.print("UID Value: ");
-    for (uint8_t i=0; i < uidLength; i++) 
-    {
-      Serial.print(" 0x");Serial.print(uid[i], HEX); 
-    }
+
 
 
     chacha.setKey(key, chacha.keySize());
@@ -331,6 +288,69 @@ void showCredentials(int entryPointer) {
   delay(50);
 }
 
+void displayInit()
+{
+
+  // SSD1306_SWITCHCAPVCC = generate display voltage from 3.3V internally
+  if (!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
+    Serial.println(F("SSD1306 allocation failed"));
+    for (;;); // Don't proceed, loop forever
+  }
+
+  display.setTextSize(2);      // Normal 1:1 pixel scale
+  display.setTextColor(SSD1306_WHITE); // Draw white text
+  display.setCursor(0, 0);     // Start at top-left corner
+  display.cp437(true);         // Use full 256 char 'Code Page 437' font
+
+
+  display.print("Gib den Code ein"); //Enter code
+
+  // Show the display buffer on the screen. You MUST call display() after
+  display.display(); // drawing commands to make them visible on screen!
+}
+
+
+void rfidInit()
+{
+  /*start with RFID module*/
+  SPI_NFC.begin(PN532_SCK, PN532_MISO, PN532_MOSI, PN532_SS);
+  nfc.begin();
+
+  uint32_t versiondata = nfc.getFirmwareVersion();
+  if (! versiondata) {
+    Serial.print("Didn't find PN53x board");
+    for (;;); // Don't proceed, loop forever
+  }
+
+  // Set the max number of retry attempts to read from a card
+  // This prevents us from waiting forever for a card, which is
+  // the default behaviour of the PN532.
+  nfc.setPassiveActivationRetries(0xFF);
+
+  // configure board to read RFID tags
+  nfc.SAMConfig();
+ 
+  boolean success=false;
+  uint8_t uid[] = { 0, 0, 0, 0, 0, 0, 0 };  // Buffer to store the returned UID
+  uint8_t uidLength;        // Length of the UID (4 or 7 bytes depending on ISO14443A card type)
+
+
+while(!success)
+{
+  // Wait for an ISO14443A type cards (Mifare, etc.).  When one is found
+  // 'uid' will be populated with the UID, and uidLength will indicate
+  // if the uid is 4 bytes (Mifare Classic) or 7 bytes (Mifare Ultralight)
+  success = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, &uid[0], &uidLength);
+}
+
+    Serial.println("Found a card!");
+    Serial.print("UID Length: "); Serial.print(uidLength, DEC); Serial.println(" bytes");
+    Serial.print("UID Value: ");
+    for (uint8_t i = 0; i < uidLength; i++)
+    {
+      Serial.print(" 0x"); Serial.print(uid[i], HEX);
+    }
+}
 
 bool sendCredentials(int entryPointer, bool stepCredential) {
 
