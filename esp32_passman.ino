@@ -1,6 +1,7 @@
 #include <Crypto.h>
 #include <ChaCha.h>
 #include <BLAKE2s.h>
+#include <SHA3.h>
 #include <string.h>
 #include <ESP.h>
 #if defined(ESP8266) || defined(ESP32)
@@ -62,6 +63,7 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 #define KEY_SIZE 16 //key size for chacha algorthm
 ChaCha chacha; //chacha object
 
+uint8_t chacha_key[KEY_SIZE_1]; //key used for decryption
 
 uint8_t test1[] = {0x52 , 0x79 , 0x64 , 0x7a , 0x61 , 0x6b , 0x33 , 0x30 , 0x23};
 uint8_t test2[] = {0x48 , 0x75 , 0x78 , 0x23 , 0x31 , 0x39 , 0x4c , 0x65 , 0x79 , 0x21 , 0x34 , 0x38 , 0x79 , 0x61 , 0x6e , 0x64 , 0x65 , 0x78 , 0x41 , 0x6c , 0x64 , 0x23 , 0x31 , 0x39 , 0x4f , 0x75 , 0x73 , 0x21 , 0x38 , 0x34};
@@ -79,10 +81,10 @@ uint8_t uidLength;        // Length of the UID (4 or 7 bytes depending on ISO144
 uint8_t mac_address[6];  // Buffer to store the returned MAC
 
 uint8_t log_hash[HASH_SIZE] =
-{ 0x69, 0x21, 0x7a, 0x30, 0x79, 0x90, 0x80, 0x94,
-  0xe1, 0x11, 0x21, 0xd0, 0x42, 0x35, 0x4a, 0x7c,
-  0x1f, 0x55, 0xb6, 0x48, 0x2c, 0xa1, 0xa5, 0x1e,
-  0x1b, 0x25, 0x0d, 0xfd, 0x1e, 0xd0, 0xee, 0xf9
+{ 0x99, 0x7c, 0x29, 0x27, 0x87, 0x7e, 0x5a, 0xe3,
+  0x66, 0xfa, 0x0,  0xc4, 0x79, 0x91, 0x84, 0x30,
+  0xb8, 0x36, 0x9,  0xe6, 0xe4, 0x69, 0xc3, 0x46,
+  0x57, 0xb7, 0xaa, 0x83, 0xc9, 0xfb, 0xcc, 0xcb
 }; //log hash result
 
 uint8_t cipherdata[sizeof(test1)] = {0};
@@ -118,14 +120,10 @@ void setup() {
 
   displayInit(); //initialize dsipley; show welcome screen
 
-  uidLength = rfidInit(uid); //initialize PN532; user needs to enter secret code before use main functionality
+  rfidInit(uid, &uidLength); //initialize PN532; user needs to enter secret code before use main functionality
 
   /* DEBUG : PRINT */
   printHex("CARD ID", uid, uidLength);
-
-
-
-
 
   bleKeyboard.begin(); //start blueetooth keyboard connection
 }
@@ -327,7 +325,7 @@ void displayInit()
 }
 
 /*  DETECT PN532 AND WAIT FOR RFID CARD */
-int rfidInit(uint8_t* uid)
+void rfidInit(uint8_t* uid, uint8_t* uidLength)
 {
   /*start with RFID module*/
   SPI_NFC.begin(PN532_SCK, PN532_MISO, PN532_MOSI, PN532_SS);
@@ -348,55 +346,49 @@ int rfidInit(uint8_t* uid)
   nfc.SAMConfig();
 
   boolean success = false;
-  uint8_t uidLength;        // Length of the UID (4 or 7 bytes depending on ISO14443A card type)
+
 
   while (!success)
   {
     // Wait for an ISO14443A type cards (Mifare, etc.).  When one is found
     // 'uid' will be populated with the UID, and uidLength will indicate
     // if the uid is 4 bytes (Mifare Classic) or 7 bytes (Mifare Ultralight)
-    success = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, &uid[0], &uidLength);
+    success = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, &uid[0], uidLength);
 
     if (success)
     {
       Serial.println("Found a card!");
       success = verifyHash();
+
+       //card was wrong one -> wait few moments to start read again
+      if (!success)
+        while (nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, &uid[0], uidLength,1000)) {}
+
     }
 
+    
   }
 
-  Serial.println("Found a card!");
-  Serial.print("UID Length: "); Serial.print(uidLength, DEC); Serial.println(" bytes");
-
-  return uidLength;
 }
 
 boolean verifyHash()
 {
-
-   Serial.println(uidLength);
-   Serial.println(sizeof(mac_address));
   if ( uidLength == 0 || sizeof(mac_address) == 0) //zero size log_key component
     return false;
 
   uint8_t log_key[2 * sizeof(mac_address) + uidLength]; //log_key size of 2*MAC length(2*6byte) + rfid card (4-7bytes)
   int idx_byte = 0; //current element idx in log_key
 
-  Serial.println(idx_byte);
-  Serial.println(sizeof(log_key));
-  
-
   memcpy(&log_key[idx_byte], mac_address, sizeof(mac_address)); //copy mac_address to log_key array
   idx_byte += sizeof(mac_address); //move local pointer forward
-  Serial.println(idx_byte);
   memcpy(&log_key[idx_byte], uid, uidLength); //copy uid to log_key array
   idx_byte += uidLength; //move local pointer forward
-  Serial.println(idx_byte);
   memcpy(&log_key[idx_byte], mac_address, sizeof(mac_address)); //copy mac_address to log_key array
 
 
   printHex("log_key", log_key , sizeof(log_key)); //print log_key
 
+/* CARD VERIFICATION */
   BLAKE2s blake2s;  //hash object
   uint8_t hash[HASH_SIZE]; // hash result
 
@@ -408,11 +400,26 @@ boolean verifyHash()
 
   printHex("hash", hash, sizeof(hash)); //print hash
 
+  printHex("log_hash", log_hash, sizeof(log_hash)); //print hash
+
   if (memcmp(hash, log_hash, sizeof(hash)) != 0) //check if new hash is identical with saved
-        return false;
+    return false;
+
+  Serial.println();
+  Serial.println("Hauska Tutustua!");
+
+/* KEY FOR DESCRYPTION ASSIGNMENT */
+  SHA3_256 sha3_256;
+  
+  sha3_256.reset(); // Resets the hash ready for a new hashing process
+
+  sha3_256.update(log_key, sizeof(log_key)); //Updates the hash with data
+
+  sha3_256.finalize(chacha_key, sizeof(chacha_key)); //Finalizes the hashing process and returns the hash.
+
+  printHex("chacha_key", chacha_key, sizeof(chacha_key)); //print hash
 
   return true;
-
 }
 
 void printHex(String header, uint8_t* array_to_print , int array_size)
