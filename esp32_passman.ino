@@ -1,6 +1,8 @@
 #include <Crypto.h>
 #include <ChaCha.h>
+#include <BLAKE2s.h>
 #include <string.h>
+#include <ESP.h>
 #if defined(ESP8266) || defined(ESP32)
 #include <pgmspace.h>
 #else
@@ -36,7 +38,6 @@ BleKeyboard bleKeyboard;  //bluetooth keyboard object
 
 #define BUTTON_ACK 15  // GIOP15 pin connected to button
 #define BUTTON_CHANGE 4  // GIOP4 pin connected to button
-#define BUTTON_SPECIAL 16 // GIOP16 pin connected to button
 
 /* pins for RFID module SPI*/
 #define PN532_SCK  (18)
@@ -53,11 +54,11 @@ Adafruit_PN532 nfc(PN532_SS);
 #define SCREEN_ADDRESS 0x3C ///< See datasheet for Address; 0x3D for 128x64, 0x3C for 128x32
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
-
-
 #define MAX_CREDENTIALS 4 //change in case of new element
 #define MAX_PLAINTEXT_SIZE  64
 
+#define KEY_SIZE_1 32 //result of sha3 -> key size for chacha 
+#define HASH_SIZE 32 //hash size for blake2s
 #define KEY_SIZE 16 //key size for chacha algorthm
 ChaCha chacha; //chacha object
 
@@ -72,6 +73,17 @@ uint8_t key[] = {0x38, 0x0F, 0x75, 0xD6, 0x32, 0xF8, 0xBB, 0x2C,
 uint8_t iv[8] = {0x1C, 0x91, 0xE7, 0x99, 0x71, 0xC0, 0x1C, 0x2A};
 uint8_t counter[8] = {0xEC, 0xE9, 0x24, 0x35, 0xB1, 0x6E, 0xBF, 0xFD};
 byte pass_buffer[MAX_PLAINTEXT_SIZE];
+
+uint8_t uid[7];  // Buffer to store the returned UID (max 7 bytes)
+uint8_t uidLength;        // Length of the UID (4 or 7 bytes depending on ISO14443A card type)
+uint8_t mac_address[6];  // Buffer to store the returned MAC
+
+uint8_t log_hash[HASH_SIZE] =
+{ 0x69, 0x21, 0x7a, 0x30, 0x79, 0x90, 0x80, 0x94,
+  0xe1, 0x11, 0x21, 0xd0, 0x42, 0x35, 0x4a, 0x7c,
+  0x1f, 0x55, 0xb6, 0x48, 0x2c, 0xa1, 0xa5, 0x1e,
+  0x1b, 0x25, 0x0d, 0xfd, 0x1e, 0xd0, 0xee, 0xf9
+}; //log hash result
 
 uint8_t cipherdata[sizeof(test1)] = {0};
 
@@ -99,9 +111,21 @@ DetectBtn changeBtn(BUTTON_CHANGE);
 void setup() {
   Serial.begin(115200);
 
-  displayInit(); // type welcome string after initialization
+  retrieveMac(mac_address);//save esp mac address
 
-  rfidInit(); //initialize PN532; user needs to enter secret code before use main functionality
+  /* DEBUG : PRINT */
+  printHex("MAC ADDRESS", mac_address, sizeof(mac_address));
+
+  displayInit(); //initialize dsipley; show welcome screen
+
+  uidLength = rfidInit(uid); //initialize PN532; user needs to enter secret code before use main functionality
+
+  /* DEBUG : PRINT */
+  printHex("CARD ID", uid, uidLength);
+
+
+
+
 
   bleKeyboard.begin(); //start blueetooth keyboard connection
 }
@@ -115,15 +139,8 @@ void loop() {
   ackBtn.read();     //read ack button
   changeBtn.read();  //read change button
 
-
-
-
-
   if (false)
   {
-
-
-
     chacha.setKey(key, chacha.keySize());
     chacha.setIV(iv, chacha.ivSize());
     //chacha.setCounter(counter, chacha.ivSize());
@@ -194,7 +211,7 @@ void loop() {
   }
 }
 
-
+/*  DISPLAY MOVING "NOT CONNECTED"  */
 void scrolltext(void) {
   display.clearDisplay();
 
@@ -222,6 +239,8 @@ void scrolltext(void) {
   delay(1000);
 }
 
+
+/*  CONVERT FROM CHAR DEC TO HEX  */
 byte decTohex(char ms, char ls)
 {
   //two char's to byte
@@ -240,6 +259,7 @@ byte decTohex(char ms, char ls)
   return (b[1] * 16 + b[0]); //Dec to Hex
 }
 
+/*  PRIMITIVE XOR BYTE OPERATION WITH HARDCODDED KEY */
 byte encryptDecrypt(byte toEncrypt) {
   byte key = 'X'; //Any char will work
   byte output = toEncrypt;
@@ -249,16 +269,7 @@ byte encryptDecrypt(byte toEncrypt) {
   return output;
 }
 
-byte Decrypt(byte toEncrypt) {
-  byte key = 'X'; //Any char will work
-  byte output = toEncrypt;
-
-  output = toEncrypt ^ key ;
-
-  return output;
-}
-
-
+/*  DISPLAY CURRENT CREDENTIALS */
 void showCredentials(int entryPointer) {
   display.clearDisplay();
 
@@ -288,9 +299,16 @@ void showCredentials(int entryPointer) {
   delay(50);
 }
 
+/* SAVE ESP32 ID (MAC) */
+void retrieveMac( uint8_t* mac_address)
+{
+  uint64_t chipid = ESP.getEfuseMac(); //get mac
+  memcpy(mac_address, &chipid, sizeof(chipid)); //copy content of variable to array
+}
+
+/*  DETECT OLED AND DISPLAY WELCOME SCREEN */
 void displayInit()
 {
-
   // SSD1306_SWITCHCAPVCC = generate display voltage from 3.3V internally
   if (!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
     Serial.println(F("SSD1306 allocation failed"));
@@ -302,15 +320,14 @@ void displayInit()
   display.setCursor(0, 0);     // Start at top-left corner
   display.cp437(true);         // Use full 256 char 'Code Page 437' font
 
-
-  display.print("Gib den Code ein"); //Enter code
+  display.print("Gib den Code ein"); //Enter code text
 
   // Show the display buffer on the screen. You MUST call display() after
   display.display(); // drawing commands to make them visible on screen!
 }
 
-
-void rfidInit()
+/*  DETECT PN532 AND WAIT FOR RFID CARD */
+int rfidInit(uint8_t* uid)
 {
   /*start with RFID module*/
   SPI_NFC.begin(PN532_SCK, PN532_MISO, PN532_MOSI, PN532_SS);
@@ -329,29 +346,89 @@ void rfidInit()
 
   // configure board to read RFID tags
   nfc.SAMConfig();
- 
-  boolean success=false;
-  uint8_t uid[] = { 0, 0, 0, 0, 0, 0, 0 };  // Buffer to store the returned UID
+
+  boolean success = false;
   uint8_t uidLength;        // Length of the UID (4 or 7 bytes depending on ISO14443A card type)
 
+  while (!success)
+  {
+    // Wait for an ISO14443A type cards (Mifare, etc.).  When one is found
+    // 'uid' will be populated with the UID, and uidLength will indicate
+    // if the uid is 4 bytes (Mifare Classic) or 7 bytes (Mifare Ultralight)
+    success = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, &uid[0], &uidLength);
 
-while(!success)
-{
-  // Wait for an ISO14443A type cards (Mifare, etc.).  When one is found
-  // 'uid' will be populated with the UID, and uidLength will indicate
-  // if the uid is 4 bytes (Mifare Classic) or 7 bytes (Mifare Ultralight)
-  success = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, &uid[0], &uidLength);
-}
-
-    Serial.println("Found a card!");
-    Serial.print("UID Length: "); Serial.print(uidLength, DEC); Serial.println(" bytes");
-    Serial.print("UID Value: ");
-    for (uint8_t i = 0; i < uidLength; i++)
+    if (success)
     {
-      Serial.print(" 0x"); Serial.print(uid[i], HEX);
+      Serial.println("Found a card!");
+      success = verifyHash();
     }
+
+  }
+
+  Serial.println("Found a card!");
+  Serial.print("UID Length: "); Serial.print(uidLength, DEC); Serial.println(" bytes");
+
+  return uidLength;
 }
 
+boolean verifyHash()
+{
+
+   Serial.println(uidLength);
+   Serial.println(sizeof(mac_address));
+  if ( uidLength == 0 || sizeof(mac_address) == 0) //zero size log_key component
+    return false;
+
+  uint8_t log_key[2 * sizeof(mac_address) + uidLength]; //log_key size of 2*MAC length(2*6byte) + rfid card (4-7bytes)
+  int idx_byte = 0; //current element idx in log_key
+
+  Serial.println(idx_byte);
+  Serial.println(sizeof(log_key));
+  
+
+  memcpy(&log_key[idx_byte], mac_address, sizeof(mac_address)); //copy mac_address to log_key array
+  idx_byte += sizeof(mac_address); //move local pointer forward
+  Serial.println(idx_byte);
+  memcpy(&log_key[idx_byte], uid, uidLength); //copy uid to log_key array
+  idx_byte += uidLength; //move local pointer forward
+  Serial.println(idx_byte);
+  memcpy(&log_key[idx_byte], mac_address, sizeof(mac_address)); //copy mac_address to log_key array
+
+
+  printHex("log_key", log_key , sizeof(log_key)); //print log_key
+
+  BLAKE2s blake2s;  //hash object
+  uint8_t hash[HASH_SIZE]; // hash result
+
+  blake2s.reset(); // Resets the hash ready for a new hashing process
+
+  blake2s.update(log_key, sizeof(log_key)); //Updates the hash with data
+
+  blake2s.finalize(hash, sizeof(hash)); //Finalizes the hashing process and returns the hash.
+
+  printHex("hash", hash, sizeof(hash)); //print hash
+
+  if (memcmp(hash, log_hash, sizeof(hash)) != 0) //check if new hash is identical with saved
+        return false;
+
+  return true;
+
+}
+
+void printHex(String header, uint8_t* array_to_print , int array_size)
+{
+  Serial.println(); //start with new line
+  Serial.print(header); Serial.print(": "); //print header + padding
+
+  //print each byte separately
+  for (uint8_t i = 0; i < array_size; i++)
+  {
+    Serial.print(" 0x"); Serial.print(array_to_print[i], HEX);
+  }
+
+}
+
+/*  FORWARD CURRENT CREDENTIALS VIA BLUETOOTH */
 bool sendCredentials(int entryPointer, bool stepCredential) {
 
   switch (credentials[entryPointer]._action)
