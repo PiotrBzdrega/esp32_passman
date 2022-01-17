@@ -58,12 +58,14 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 #define MAX_CREDENTIALS 4 //change in case of new element
 #define MAX_PLAINTEXT_SIZE  64
 
+#define IV_SIZE 8 //initial vector size
 #define KEY_SIZE_1 32 //result of sha3 -> key size for chacha 
 #define HASH_SIZE 32 //hash size for blake2s
 #define KEY_SIZE 16 //key size for chacha algorthm
 ChaCha chacha; //chacha object
 
 uint8_t chacha_key[KEY_SIZE_1]; //key used for decryption
+uint8_t chacha_iv[IV_SIZE];    //initial vector for chacha encr/decr
 
 uint8_t test1[] = {0x52 , 0x79 , 0x64 , 0x7a , 0x61 , 0x6b , 0x33 , 0x30 , 0x23};
 uint8_t test2[] = {0x48 , 0x75 , 0x78 , 0x23 , 0x31 , 0x39 , 0x4c , 0x65 , 0x79 , 0x21 , 0x34 , 0x38 , 0x79 , 0x61 , 0x6e , 0x64 , 0x65 , 0x78 , 0x41 , 0x6c , 0x64 , 0x23 , 0x31 , 0x39 , 0x4f , 0x75 , 0x73 , 0x21 , 0x38 , 0x34};
@@ -81,10 +83,10 @@ uint8_t uidLength;        // Length of the UID (4 or 7 bytes depending on ISO144
 uint8_t mac_address[6];  // Buffer to store the returned MAC
 
 uint8_t log_hash[HASH_SIZE] =
-{ 0x99, 0x7c, 0x29, 0x27, 0x87, 0x7e, 0x5a, 0xe3,
-  0x66, 0xfa, 0x0,  0xc4, 0x79, 0x91, 0x84, 0x30,
-  0xb8, 0x36, 0x9,  0xe6, 0xe4, 0x69, 0xc3, 0x46,
-  0x57, 0xb7, 0xaa, 0x83, 0xc9, 0xfb, 0xcc, 0xcb
+{ 0x25, 0x89, 0x9c, 0x86, 0x3d, 0x67, 0x29, 0xfd,
+  0x5e, 0xf2, 0x3,  0xb4, 0x95, 0xf4, 0x1,  0xef,
+  0x79, 0xc5, 0xd2, 0x1f, 0xed, 0xcc, 0x88, 0xed,
+  0x13, 0xb7, 0xbe, 0x51, 0xe9, 0xb8, 0x53, 0xc9
 }; //log hash result
 
 uint8_t cipherdata[sizeof(test1)] = {0};
@@ -137,9 +139,17 @@ void loop() {
   ackBtn.read();     //read ack button
   changeBtn.read();  //read change button
 
-  if (false)
+  if (changeBtn.isRisingEdge())
   {
-    chacha.setKey(key, chacha.keySize());
+
+      chacha.setKey(chacha_key, chacha.keySize());
+      chacha.setIV(iv, chacha.ivSize());
+
+
+
+
+    
+ /*   chacha.setKey(key, chacha.keySize());
     chacha.setIV(iv, chacha.ivSize());
     //chacha.setCounter(counter, chacha.ivSize());
 
@@ -177,7 +187,7 @@ void loop() {
       Serial.write(buffer[i]);
     }
     Serial.println();
-
+ */
 
   }
 
@@ -358,6 +368,7 @@ void rfidInit(uint8_t* uid, uint8_t* uidLength)
     if (success)
     {
       Serial.println("Found a card!");
+      printHex("uid", uid , *uidLength); //card uid
       success = verifyHash();
 
        //card was wrong one -> wait few moments to start read again
@@ -418,6 +429,13 @@ boolean verifyHash()
   sha3_256.finalize(chacha_key, sizeof(chacha_key)); //Finalizes the hashing process and returns the hash.
 
   printHex("chacha_key", chacha_key, sizeof(chacha_key)); //print hash
+  
+  idx_byte = 0; // reset before next operation
+
+  //fill initial vector with card uid content
+  memcpy(&chacha_iv[idx_byte], uid, uidLength); //copy uid to iv 
+  idx_byte += uidLength; //move local pointer forward
+  memcpy(&chacha_iv[idx_byte], uid, uidLength); //copy uid to iv 
 
   return true;
 }
