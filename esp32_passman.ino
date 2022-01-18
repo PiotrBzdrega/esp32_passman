@@ -59,13 +59,17 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 #define MAX_PLAINTEXT_SIZE  64
 
 #define IV_SIZE 8 //initial vector size
-#define KEY_SIZE_1 32 //result of sha3 -> key size for chacha 
+#define KEY_SIZE 32 //result of sha3 -> key size for chacha 
 #define HASH_SIZE 32 //hash size for blake2s
-#define KEY_SIZE 16 //key size for chacha algorthm
 ChaCha chacha; //chacha object
 
-uint8_t chacha_key[KEY_SIZE_1]; //key used for decryption
+uint8_t chacha_key[KEY_SIZE]; //key used for decryption
 uint8_t chacha_iv[IV_SIZE];    //initial vector for chacha encr/decr
+uint8_t chacha_pass[KEY_SIZE]={0x48, 0x75, 0x78, 0x23, 0x31, 0x39, 0x4c, 0x65, //test messy pass
+                               0x79, 0x21, 0x34, 0x38, 0x65, 0x74, 0x75, 0x74,
+                               0x6f, 0x72, 0x41, 0x6c, 0x64, 0x23, 0x31, 0x39,
+                               0x4f, 0x75, 0x73, 0x21, 0x38, 0x34, 0x19, 0x1e};
+
 
 uint8_t test1[] = {0x52 , 0x79 , 0x64 , 0x7a , 0x61 , 0x6b , 0x33 , 0x30 , 0x23};
 uint8_t test2[] = {0x48 , 0x75 , 0x78 , 0x23 , 0x31 , 0x39 , 0x4c , 0x65 , 0x79 , 0x21 , 0x34 , 0x38 , 0x79 , 0x61 , 0x6e , 0x64 , 0x65 , 0x78 , 0x41 , 0x6c , 0x64 , 0x23 , 0x31 , 0x39 , 0x4f , 0x75 , 0x73 , 0x21 , 0x38 , 0x34};
@@ -141,13 +145,28 @@ void loop() {
 
   if (changeBtn.isRisingEdge())
   {
+      //ENCRYPTION
+      chacha.setKey(chacha_key, chacha.keySize()); //set encryption key
+      chacha.setIV(chacha_iv, chacha.ivSize());    //set encryption initial vector 
+      uint8_t chcha_cipher[KEY_SIZE];              //cipher declaration
+      memset(chcha_cipher, 0, sizeof(chcha_cipher)); //reset cipher before encryption
+      chacha.encrypt(chcha_cipher, chacha_pass, sizeof(chacha_pass)); //operative encryption
 
-      chacha.setKey(chacha_key, chacha.keySize());
-      chacha.setIV(iv, chacha.ivSize());
+      printHex("cipher", chcha_cipher, sizeof(chcha_cipher)); //print cipher
 
+      //DECRYPTION
+      chacha.setKey(chacha_key, chacha.keySize()); //set decryption key
+      chacha.setIV(chacha_iv, chacha.ivSize());    //set decryption initial vector 
+      uint8_t chcha_digest[KEY_SIZE];              //digest declaration
+      chacha.decrypt(chcha_digest, chcha_cipher, sizeof(chcha_cipher));
 
+      printHex("digest", chcha_digest, sizeof(chcha_digest)); //print cipher
 
-
+          //in last byte we stored password length
+      for (int i = 0; i < (int)chcha_digest[sizeof(chcha_digest) - 1]; i++)
+      {
+          Serial.write(chcha_digest[i]);
+      }
     
  /*   chacha.setKey(key, chacha.keySize());
     chacha.setIV(iv, chacha.ivSize());
