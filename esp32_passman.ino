@@ -1,3 +1,5 @@
+#include "soc/soc.h"
+#include "soc/rtc_cntl_reg.h"
 #include <Crypto.h>
 #include <ChaCha.h>
 #include <BLAKE2s.h>
@@ -13,7 +15,10 @@
 #define MAX_PLAINTEXT_SIZE  64
 #define MAX_CIPHERTEXT_SIZE 64
 
-
+#include "Arduino.h"
+//#include <esp_wifi.h>
+//#include <WiFi.h>
+//#include "driver/adc.h"
 
 #include <BleKeyboard.h>
 #include "DetectBtn.h"
@@ -117,7 +122,13 @@ DetectBtn ackBtn(BUTTON_ACK);
 DetectBtn changeBtn(BUTTON_CHANGE);
 
 void setup() {
+    WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); //disable brownout detector
   Serial.begin(115200);
+
+   //adc_power_off();
+   //adc_power_release();
+   //WiFi.mode(WIFI_OFF);    // Switch WiFi off
+   //setCpuFrequencyMhz(80);
 
   retrieveMac(mac_address);//save esp mac address
 
@@ -131,7 +142,13 @@ void setup() {
   /* DEBUG : PRINT */
   printHex("CARD ID", uid, uidLength);
 
+
+
   bleKeyboard.begin(); //start blueetooth keyboard connection
+
+
+
+
 }
 
 void loop() {
@@ -140,6 +157,8 @@ void loop() {
   // the interval at which you want to blink the LED.
   unsigned long currentMillis = millis();
 
+
+   
   ackBtn.read();     //read ack button
   changeBtn.read();  //read change button
 
@@ -210,8 +229,12 @@ void loop() {
 
   }
 
+
   if (bleKeyboard.isConnected()) {
 
+            
+
+    
     //detect pressed ack button and we have credential pointer in range
     if (ackBtn.isRisingEdge() && credentialPointer > -1)
     {
@@ -234,6 +257,8 @@ void loop() {
     }
   }
   else {
+
+
     scrolltext(); // Draw scrolling text "Not Connected"
   }
 }
@@ -398,6 +423,9 @@ void rfidInit(uint8_t* uid, uint8_t* uidLength)
 
     
   }
+
+  //nfc.shutDown(); //shut down module in case we recognized correct uid
+  //delay(2000);
 
 }
 
